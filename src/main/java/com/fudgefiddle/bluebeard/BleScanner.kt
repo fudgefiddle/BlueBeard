@@ -1,4 +1,4 @@
-package com.example.bluebeard
+package com.fudgefiddle.bluebeard
 
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice

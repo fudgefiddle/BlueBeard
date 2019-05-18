@@ -1,4 +1,4 @@
-package com.example.bluebeard.device_template
+package com.fudgefiddle.bluebeard.device_template
 
 import java.util.*
 
@@ -24,7 +24,7 @@ class CharacteristicBuilder
         return this
     }
 
-    fun build(): Characteristic = Characteristic(name, uuid, readConversion, writeConversion)
+    fun build(): BleProperties.Characteristic = BleProperties.Characteristic(name, uuid, readConversion, writeConversion)
     fun addToService(): ServiceBuilder = serviceBuilder!!.addCharacteristic(build())
 
 }

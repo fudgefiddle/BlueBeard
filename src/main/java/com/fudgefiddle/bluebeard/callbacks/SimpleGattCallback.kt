@@ -1,4 +1,4 @@
-package com.example.bluebeard.callbacks
+package com.fudgefiddle.bluebeard.callbacks
 
 import android.bluetooth.BluetoothDevice
 import java.util.*

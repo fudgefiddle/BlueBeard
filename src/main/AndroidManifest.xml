@@ -8,7 +8,7 @@
     <application>
         <service
             android:enabled="true"
-            android:name="com.example.bluebeard.BleService"/>
+            android:name="com.fudgefiddle.bluebeard.BlueBeardService"/>
     </application>
 
 

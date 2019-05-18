@@ -1,5 +1,7 @@
-package com.example.bluebeard.device_template
+package com.fudgefiddle.bluebeard.device_template
 
+import com.fudgefiddle.bluebeard.device_template.BleProperties.Service
+import com.fudgefiddle.bluebeard.device_template.BleProperties.Characteristic
 import java.util.*
 
 class ServiceBuilder internal constructor(private val name: String, private val uuid: UUID, private val device: DeviceTemplateBuilder?) {

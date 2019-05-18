@@ -1,8 +1,7 @@
-package com.example.bluebeard.device
+package com.fudgefiddle.bluebeard.device
 
 import android.bluetooth.*
 import android.content.Context
-import com.example.bluebeard.device_template.Characteristic
 import java.util.*
 
 internal class BleDevice(val btDevice: BluetoothDevice) {
@@ -104,8 +103,4 @@ internal class BleDevice(val btDevice: BluetoothDevice) {
             true
         }
     }
-
-    companion object{
-    }
-
 }

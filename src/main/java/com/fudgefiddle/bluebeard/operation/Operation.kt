@@ -1,8 +1,6 @@
-package com.example.bluebeard.operation
+package com.fudgefiddle.bluebeard.operation
 
-import android.bluetooth.BluetoothGattDescriptor
-import com.example.bluebeard.device.BleDevice
-import com.example.bluebeard.device_template.Characteristic
+import com.fudgefiddle.bluebeard.device.BleDevice
 
 internal sealed class Operation(val device: BleDevice, val timeout: Long, val delay: Long ){
 

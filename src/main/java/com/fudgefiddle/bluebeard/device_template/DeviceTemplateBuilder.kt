@@ -1,5 +1,7 @@
-package com.example.bluebeard.device_template
+package com.fudgefiddle.bluebeard.device_template
 
+import com.fudgefiddle.bluebeard.device_template.BleProperties.Service
+import com.fudgefiddle.bluebeard.device_template.BleProperties.DeviceTemplate
 import java.util.*
 
 class DeviceTemplateBuilder(private val name: String) {
