@@ -1,18 +1,18 @@
 package com.fudgefiddle.bluebeard
 
 import android.app.Service
+import android.arch.lifecycle.LiveData
+import android.arch.lifecycle.MutableLiveData
 import android.bluetooth.*
 import android.bluetooth.BluetoothGatt.*
-import android.bluetooth.BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
 import android.content.Context
 import android.content.Intent
 import android.os.Binder
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import com.fudgefiddle.bluebeard.callbacks.SimpleGattCallback
 import com.fudgefiddle.bluebeard.device.BleDevice
-import com.fudgefiddle.bluebeard.device_template.BleProperties.*
+import com.fudgefiddle.bluebeard.device_template.BleProperties.DeviceTemplate
 import com.fudgefiddle.bluebeard.operation.Operation
 import java.util.*
 
@@ -25,14 +25,25 @@ class BlueBeardService : Service() {
 
     private var mAutoReconnect: Boolean = false
 
-    /** Callbacks */
-    private var mReadCB: SimpleGattCallback? = null
-    private var mWriteCB: SimpleGattCallback? = null
-    private var mNotifyCB: SimpleGattCallback? = null
-    private var mConnectionCB: SimpleGattCallback? = null
-    private var mDiscoveryCB: SimpleGattCallback? = null
-    private var mDisconnectionCB: SimpleGattCallback? = null
-    private var mWriteDescriptorCB: SimpleGattCallback? = null
+    private val onReadSuccess: MutableLiveData<Operation.Write> = MutableLiveData()
+    private val onReadFailure: MutableLiveData<Operation.Write> = MutableLiveData()
+
+    private val onWriteSuccess: MutableLiveData<Operation.Write> = MutableLiveData()
+    private val onWriteFailure: MutableLiveData<Operation.Write> = MutableLiveData()
+
+    private val onConnectSuccess: MutableLiveData<Operation.Connect> = MutableLiveData()
+    private val onConnectFailure: MutableLiveData<Operation.Connect> = MutableLiveData()
+
+    private val onDiscoverSuccess: MutableLiveData<Operation.Discover> = MutableLiveData()
+    private val onDiscoverFailure: MutableLiveData<Operation.Discover> = MutableLiveData()
+
+    private val onDisconnectSuccess: MutableLiveData<Operation.Disconnect> = MutableLiveData()
+    private val onDisconnectFailure: MutableLiveData<Operation.Disconnect> = MutableLiveData()
+
+    private val onNotification: MutableLiveData<Operation.Write> = MutableLiveData()
+
+    private val onDescriptorWriteSuccess: MutableLiveData<Operation.WriteDescriptor> = MutableLiveData()
+    private val onDescriptorWriteFailure: MutableLiveData<Operation.WriteDescriptor> = MutableLiveData()
 
     private val mDeviceTemplateList = object : ArrayList<DeviceTemplate>() {
         override fun add(element: DeviceTemplate): Boolean = if(!contains(element)) super.add(element) else false
@@ -89,7 +100,7 @@ class BlueBeardService : Service() {
         }
 
         fun onOperationCompleteSuccess() {
-            mLastOperation.device.attempts = 0
+            getLastOperationDevice()?.attempts = 0
             executeNextOperation()
         }
 
@@ -108,7 +119,7 @@ class BlueBeardService : Service() {
             try {
                 mLastOperation = remove()
                 if(attemptLimit != 0)
-                    mLastOperation.device.attempts++
+                    getLastOperationDevice()?.attempts?.plus(1)
                 handleOperation()
             } catch (e: NoSuchElementException) {
                 mCurrentlyOperating = false
@@ -139,83 +150,82 @@ class BlueBeardService : Service() {
         }
 
         fun resetLastDeviceAttempts(){
-            mLastOperation.device.attempts = 0
+            getLastOperationDevice()?.attempts = 0
         }
 
-        fun getLastOperationDevice(): BleDevice{
-            return mLastOperation.device
+        fun getLastOperationDevice(): BleDevice? {
+            return mBleDeviceList.get(mLastOperation.address)
         }
 
         private fun handleOperation() {
             // Get operation values
-            mLastOperation.let{ operation ->
+            val operation = mLastOperation
 
-                val delay = operation.delay
-                val timeout = operation.timeout
+            val delay = operation.delay
+            val timeout = operation.timeout
 
-                operation.device.apply {
-                    when {
-                        // Exceeded attempt limit
-                        (attemptLimit != 0 && attempts >= attemptLimit) -> {
-                            // Reset attempts else infinite loop
-                            mLastOperation.device.attempts = 0
-                            // Remove all pending operations for this device
-                            removeAllWhere { operation -> operation.device.address == address }
-                            // Disconnect from the device
-                            if (connected)
-                                add(Operation.Disconnect(this))
-                            // Move on
-                            executeNextOperation()
-                        }
-                        // NOT exceeded attempt limit; NOT connected
-                        !connected -> {
-                            when (operation) {
-                                is Operation.Connect -> delay(delay){ connect(mContext, mGattCallback) }
+            getLastOperationDevice()?.apply {
+                when {
+                    // Exceeded attempt limit
+                    (attemptLimit != 0 && attempts >= attemptLimit) -> {
+                        // Reset attempts else infinite loop
+                        attempts = 0
+                        // Remove all pending operations for this address
+                        removeAllWhere { operation -> operation.address == address }
+                        // Disconnect from the address
+                        if (connected)
+                            add(Operation.Disconnect(address))
+                        // Move on
+                        executeNextOperation()
+                    }
+                    // NOT exceeded attempt limit; NOT connected
+                    !connected -> {
+                        when (operation) {
+                            is Operation.Connect -> delay(delay){ connect(mContext, mGattCallback) }
 
-                                is Operation.Disconnect -> onOperationCompleteSuccess()
+                            is Operation.Disconnect -> onOperationCompleteSuccess()
 
-                                else -> {
-                                    if(faultCorrection) {
-                                        add(Operation.Connect(this))
-                                        addLastOperation()
-                                    }
-                                    onOperationCompleteSuccess()
+                            else -> {
+                                if(faultCorrection) {
+                                    add(Operation.Connect(address))
+                                    addLastOperation()
                                 }
+                                onOperationCompleteSuccess()
                             }
                         }
-                        // NOT exceeded attempt limit; IS connected; NOT discovered
-                        !discovered -> {
-                            when (operation) {
-                                is Operation.Connect -> onOperationCompleteSuccess()
+                    }
+                    // NOT exceeded attempt limit; IS connected; NOT discovered
+                    !discovered -> {
+                        when (operation) {
+                            is Operation.Connect -> onOperationCompleteSuccess()
 
-                                is Operation.Disconnect -> delay(delay) { disconnect() }
+                            is Operation.Disconnect -> delay(delay) { disconnect() }
 
-                                is Operation.Discover -> delay(delay) { discoverServices() }
+                            is Operation.Discover -> delay(delay) { discoverServices() }
 
-                                else -> {
-                                    if(faultCorrection) {
-                                        add(Operation.Discover(this))
-                                        addLastOperation()
-                                    }
-                                    onOperationCompleteSuccess()
+                            else -> {
+                                if(faultCorrection) {
+                                    add(Operation.Discover(address))
+                                    addLastOperation()
                                 }
+                                onOperationCompleteSuccess()
                             }
                         }
-                        // NOT exceeded attempt limit; IS connected; IS discovered
-                        else -> {
-                            when (operation) {
-                                is Operation.Read -> delay(delay) { read(operation.uuid) }
+                    }
+                    // NOT exceeded attempt limit; IS connected; IS discovered
+                    else -> {
+                        when (operation) {
+                            is Operation.Read -> delay(delay) { read(operation.uuid) }
 
-                                is Operation.Write -> delay(delay) { write(operation.uuid, operation.value) }
+                            is Operation.Write -> delay(delay) { write(operation.uuid, operation.value) }
 
-                                is Operation.WriteDescriptor -> delay(delay) { writeDescriptor(operation.characteristicUuid, operation.descriptorUuid, operation.value) }
+                            is Operation.WriteDescriptor -> delay(delay) { writeDescriptor(operation.characteristicUuid, operation.descriptorUuid, operation.value) }
 
-                                is Operation.Notify -> delay(delay) { notify(operation.uuid, operation.enable) }
+                            is Operation.Notification -> delay(delay) { notify(operation.uuid, operation.enable) }
 
-                                is Operation.Disconnect -> delay(delay) { disconnect() }
+                            is Operation.Disconnect -> delay(delay) { disconnect() }
 
-                                else -> onOperationCompleteSuccess()
-                            }
+                            else -> onOperationCompleteSuccess()
                         }
                     }
                 }
@@ -236,11 +246,11 @@ class BlueBeardService : Service() {
                         STATE_CONNECTED -> {
                             onSuccess { 
                                 device.connected = true
-                                mConnectionCB?.onSuccess(device.btDevice)
+                                onConnectSuccess.value = Operation.Connect(device.address)
                             }
                             onFailure { 
                                 device.connected = false
-                                mConnectionCB?.onFailure(device.btDevice)
+                                onConnectFailure.value = Operation.Connect(device.address)
                             }
 
                             shouldComplete(isSameDeviceAsLastOperation(device))
@@ -251,13 +261,13 @@ class BlueBeardService : Service() {
                                 discovered = false
                                 closeGatt()
                             }
-                            onSuccess { mDisconnectionCB?.onSuccess(device.btDevice) }
+                            onSuccess { onDisconnectSuccess.value = Operation.Disconnect(device.address) }
 
                             onFailure {
                                 if(mAutoReconnect){
-                                    mOperationDeque.add(Operation.Connect(device))
+                                    mOperationDeque.add(Operation.Connect(device.address))
                                 }
-                                mDisconnectionCB?.onFailure(device.btDevice)
+                                onDisconnectFailure.value = Operation.Disconnect(device.address)
                             }
 
                             shouldComplete(isSameDeviceAsLastOperation(device))
@@ -272,11 +282,11 @@ class BlueBeardService : Service() {
                 CustomGattCallback(status).apply {
                     onSuccess {
                         device.discovered = true
-                        mDiscoveryCB?.onSuccess(device.btDevice)
+                        onDiscoverSuccess.value = Operation.Discover(device.address)
                     }
                     onFailure { 
                         device.discovered = false
-                        mDiscoveryCB?.onFailure(device.btDevice)
+                        onDiscoverFailure.value = Operation.Discover(device.address)
                     }
 
                     shouldComplete(isSameDeviceAsLastOperation(device))
@@ -288,16 +298,17 @@ class BlueBeardService : Service() {
                                           characteristic: BluetoothGattCharacteristic?,
                                           status: Int) {
             mBleDeviceList.get(gatt)?.let { device ->
-                CustomGattCallback(status).apply {
-                    onSuccess {
-                        val retVal: Any? = getCharacteristicValue(device, characteristic)
-                        mReadCB?.onSuccess(device.btDevice, characteristic?.uuid, retVal)
-                    }
-                    onFailure { mReadCB?.onFailure(device.btDevice, characteristic?.uuid) }
+                characteristic?.let { char ->
 
-                    shouldComplete(isSameDeviceAsLastOperation(device))
+                    CustomGattCallback(status).apply {
+                        onSuccess { onReadSuccess.value = Operation.Write(device.address, char.uuid.toString(), char.value) }
 
-                }.execute()
+                        onFailure { onReadFailure.value = Operation.Write(device.address, char.uuid.toString(), char.value) }
+
+                        shouldComplete(isSameDeviceAsLastOperation(device))
+
+                    }.execute()
+                }
             }
         }
 
@@ -305,38 +316,43 @@ class BlueBeardService : Service() {
                                            characteristic: BluetoothGattCharacteristic?,
                                            status: Int) {
             mBleDeviceList.get(gatt)?.let { device ->
-                CustomGattCallback(status).apply {
-                    onSuccess { mWriteCB?.onSuccess(device.btDevice, characteristic?.uuid) }
-                    onFailure { mWriteCB?.onFailure(device.btDevice, characteristic?.uuid) }
-                    shouldComplete(isSameDeviceAsLastOperation(device))
-                }.execute()
+                characteristic?.let { char ->
+                    CustomGattCallback(status).apply {
+                        onSuccess { onWriteSuccess.value = Operation.Write(device.address, char.uuid.toString(), char.value) }
+                        onFailure { onWriteFailure.value = Operation.Write(device.address, char.uuid.toString(), char.value) }
+                        shouldComplete(isSameDeviceAsLastOperation(device))
+                    }.execute()
+                }
             }
         }
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt?, characteristic: BluetoothGattCharacteristic?) {
             mBleDeviceList.get(gatt)?.let { device ->
-                CustomGattCallback(GATT_SUCCESS).apply {
-                    onSuccess {
-                        val retVal: Any? = getCharacteristicValue(device, characteristic)
-                        mNotifyCB?.onSuccess(device.btDevice, characteristic?.uuid, retVal)
-                    }
-                    shouldComplete(false)
-                }.execute()
+                characteristic?.let { char ->
+                    CustomGattCallback(GATT_SUCCESS).apply {
+                        onSuccess {
+                            onNotification.value = Operation.Write(device.address, char.uuid.toString(), char.value)
+                        }
+                        shouldComplete(false)
+                    }.execute()
+                }
             }
         }
 
         override fun onDescriptorWrite(gatt: BluetoothGatt?, descriptor: BluetoothGattDescriptor?, status: Int) {
             mBleDeviceList.get(gatt)?.let{ device ->
-                CustomGattCallback(status).apply{
-                    onSuccess{
-                        mWriteDescriptorCB?.onSuccess(device.btDevice, descriptor?.uuid)
-                    }
-                    onFailure {
-                        mWriteDescriptorCB?.onFailure(device.btDevice, descriptor?.uuid)
-                    }
+                descriptor?.let { desc ->
+                    CustomGattCallback(status).apply {
+                        onSuccess {
+                            onDescriptorWriteSuccess.value = Operation.WriteDescriptor(device.address, desc.characteristic.uuid.toString(), desc.uuid.toString(), desc.value)
+                        }
+                        onFailure {
+                            onDescriptorWriteFailure.value = Operation.WriteDescriptor(device.address, desc.characteristic.uuid.toString(), desc.uuid.toString(), desc.value)
+                        }
 
-                    shouldComplete(isSameDeviceAsLastOperation(device))
-                }.execute()
+                        shouldComplete(isSameDeviceAsLastOperation(device))
+                    }.execute()
+                }
             }
         }
 
@@ -375,31 +391,35 @@ class BlueBeardService : Service() {
     fun enableAutoReconnect(enable: Boolean){
         mAutoReconnect = enable
     }
-    //endregion
 
-    //region Callback Setters
-    fun setReadCallback(simpleGattCallback: SimpleGattCallback){
-        mReadCB = simpleGattCallback
+    fun getReadSuccessLiveData(): LiveData<Operation.Write> = onReadSuccess
+    fun getReadFailureLiveData(): LiveData<Operation.Write> = onReadFailure
+
+    fun getWriteSuccessLiveData(): LiveData<Operation.Write> = onWriteSuccess
+    fun getWriteFailureLiveData(): LiveData<Operation.Write> = onWriteFailure
+
+    fun getConnectSuccessLiveData(): LiveData<Operation.Connect> = onConnectSuccess
+    fun getConnectFailureLiveData(): LiveData<Operation.Connect> = onConnectFailure
+
+    fun getDisconnectSuccessLiveData(): LiveData<Operation.Disconnect> = onDisconnectSuccess
+    fun getDisconnectFailureLiveData(): LiveData<Operation.Disconnect> = onDisconnectFailure
+
+    fun getDiscoverSuccessLiveData(): LiveData<Operation.Discover> = onDiscoverSuccess
+    fun getDiscoverFailureLiveData(): LiveData<Operation.Discover> = onDiscoverFailure
+
+    fun getDescriptorWriteSuccessLiveData(): LiveData<Operation.WriteDescriptor> = onDescriptorWriteSuccess
+    fun getDescriptorWriteFailureLiveData(): LiveData<Operation.WriteDescriptor> = onDescriptorWriteFailure
+
+    fun getNotificationLiveData(): LiveData<Operation.Write> = onNotification
+
+    fun send(operation: Operation): Boolean{
+        return mOperationDeque.add(operation)
     }
-    fun setWriteCallback(simpleGattCallback: SimpleGattCallback){
-        mWriteCB = simpleGattCallback
+
+    fun addDeviceTemplate(template: DeviceTemplate): Boolean{
+        return mDeviceTemplateList.add(template)
     }
-    fun setNotificationCallback(simpleGattCallback: SimpleGattCallback){
-        mNotifyCB = simpleGattCallback
-    }
-    fun setConnectionCallback(simpleGattCallback: SimpleGattCallback){
-        mConnectionCB = simpleGattCallback
-    }
-    fun setDiscoveryCallback(simpleGattCallback: SimpleGattCallback){
-        mDiscoveryCB = simpleGattCallback
-    }
-    fun setDisconnectionCallback(simpleGattCallback: SimpleGattCallback){
-        mDisconnectionCB = simpleGattCallback
-    }
-    fun setDescriptorWriteCallback(simpleGattCallback: SimpleGattCallback){
-        mWriteDescriptorCB = simpleGattCallback
-    }
-    //endregion 
+    //endregion
 
     //region Add Device Methods
     fun addDevice(address: String): Boolean{
@@ -409,211 +429,14 @@ class BlueBeardService : Service() {
         return addDevice(device.address)
     }
     //endregion
-    
-    //region Connect Methods
-    fun connect(address: String, timeout: Long = 0L, delay: Long = 0L): Boolean{
-        addDevice(address)
-        return mBleDeviceList.get(address)?.let{ device ->
-            mOperationDeque.add(Operation.Connect(device, timeout, delay))
-        } ?: false
-    }
-    fun connect(device: BluetoothDevice, timeout: Long = 0L, delay: Long = 0L): Boolean{
-        return connect(device.address, timeout, delay)
-    }
-    fun connect(address: String, timeout: Long = 0L, delay: Long = 0L, callback: SimpleGattCallback): Boolean{
-        setConnectionCallback(callback)
-        return connect(address, timeout, delay)
-    }
-    fun connect(device: BluetoothDevice, timeout: Long = 0L, delay: Long = 0L, callback: SimpleGattCallback): Boolean{
-        setConnectionCallback(callback)
-        return connect(device.address, timeout, delay)
-    }
-    //endregion
-    
-    //region Disconnect Methods
-    fun disconnect(address: String, timeout: Long = 0L, delay: Long = 0L): Boolean{
-       return  mBleDeviceList.get(address)?.let{ device ->
-            mOperationDeque.add(Operation.Disconnect(device, timeout, delay))
-        } ?: false
-    }
-    fun disconnect(device: BluetoothDevice, timeout: Long = 0L, delay: Long = 0L): Boolean{
-        return disconnect(device.address, timeout, delay)
-    }
-    fun disconnect(address: String, timeout: Long = 0L, delay: Long = 0L, callback: SimpleGattCallback): Boolean{
-        setDisconnectionCallback(callback)
-        return disconnect(address, timeout, delay)
-    }
-    fun disconnect(device: BluetoothDevice, timeout: Long = 0L, delay: Long = 0L, callback: SimpleGattCallback): Boolean{
-        setDisconnectionCallback(callback)
-        return disconnect(device.address, timeout, delay)
-    }
-    //endregion
-    
-    //region Discover Methods
-    fun discover(address: String, timeout: Long = 0L, delay: Long = 0L): Boolean{
-        return mBleDeviceList.get(address)?.let { device ->
-            mOperationDeque.add(Operation.Discover(device, timeout, delay))
-        } ?: false
-    }
-    fun discover(device: BluetoothDevice, timeout: Long = 0L, delay: Long = 0L): Boolean{
-        return discover(device.address, timeout, delay)
-    }
-    fun discover(address: String, timeout: Long = 0L, delay: Long = 0L, callback: SimpleGattCallback): Boolean{
-        setDiscoveryCallback(callback)
-        return discover(address, timeout, delay)
-    }
-    fun discover(device: BluetoothDevice, timeout: Long = 0L, delay: Long = 0L, callback: SimpleGattCallback): Boolean{
-        setDiscoveryCallback(callback)
-        return discover(device.address, timeout, delay)
-    }
-    //endregion
-    
-    //region Read Methods
-    fun read(address: String, uuid: String, timeout: Long = 0L, delay: Long = 0L): Boolean{
-        return mBleDeviceList.get(address)?.let{ device ->
-            mOperationDeque.add(Operation.Read(device, uuid, timeout, delay))
-        } ?: false
-    }
-    fun read(address: String, uuid: UUID, timeout: Long = 0L, delay: Long = 0L): Boolean{
-        return read(address, uuid.toString(), timeout, delay) 
-    }
-    fun read(device: BluetoothDevice, uuid: String, timeout: Long = 0L, delay: Long = 0L): Boolean{
-        return read(device.address, uuid, timeout, delay) 
-    }
-    fun read(device: BluetoothDevice, uuid: UUID, timeout: Long = 0L, delay: Long = 0L): Boolean{
-        return read(device.address, uuid.toString(), timeout, delay) 
-    }
-    fun read(address: String, uuid: String, timeout: Long = 0L, delay: Long = 0L, callback: SimpleGattCallback): Boolean{
-        setReadCallback(callback)
-        return read(address, uuid, timeout, delay) 
-    }
-    fun read(address: String, uuid: UUID, timeout: Long = 0L, delay: Long = 0L, callback: SimpleGattCallback): Boolean{
-        setReadCallback(callback)
-        return read(address, uuid.toString(), timeout, delay) 
-    }
-    fun read(device: BluetoothDevice, uuid: String, timeout: Long = 0L, delay: Long = 0L, callback: SimpleGattCallback): Boolean{
-        setReadCallback(callback)
-        return read(device.address, uuid, timeout, delay) 
-    }
-    fun read(device: BluetoothDevice, uuid: UUID, timeout: Long = 0L, delay: Long = 0L, callback: SimpleGattCallback): Boolean{
-        setReadCallback(callback)
-        return read(device.address, uuid.toString(), timeout, delay) 
-    }
-    //endregion
-
-    //region Write Methods
-    fun write(address: String, uuid: String, value: Any, timeout: Long = 0L, delay: Long = 0L): Boolean{
-        return mBleDeviceList.get(address)?.let{ device ->
-            val writeValue: ByteArray = getWriteValue(device, uuid, value)
-            mOperationDeque.add(Operation.Write(device, uuid, writeValue, timeout, delay))
-        } ?: false
-    }
-    fun write(address: String, uuid: UUID, value: Any, timeout: Long = 0L, delay: Long = 0L): Boolean{
-        return write(address, uuid.toString(), value, timeout, delay) 
-    }
-    fun write(device: BluetoothDevice, uuid: String, value: Any, timeout: Long = 0L, delay: Long = 0L): Boolean{
-        return write(device.address, uuid, value, timeout, delay) 
-    }
-    fun write(device: BluetoothDevice, uuid: UUID, value: Any, timeout: Long = 0L, delay: Long = 0L): Boolean{
-        return write(device.address, uuid.toString(), value, timeout, delay) 
-    }
-    fun write(address: String, uuid: String, value: Any, timeout: Long = 0L, delay: Long = 0L, callback: SimpleGattCallback): Boolean{
-        setWriteCallback(callback)
-        return write(address, uuid, value, timeout, delay) 
-    }
-    fun write(address: String, uuid: UUID, value: Any, timeout: Long = 0L, delay: Long = 0L, callback: SimpleGattCallback): Boolean{
-        setWriteCallback(callback)
-        return write(address, uuid.toString(), value, timeout, delay) 
-    }
-    fun write(device: BluetoothDevice, uuid: String, value: Any, timeout: Long = 0L, delay: Long = 0L, callback: SimpleGattCallback): Boolean{
-        setWriteCallback(callback)
-        return write(device.address, uuid, value, timeout, delay) 
-    }
-    fun write(device: BluetoothDevice, uuid: UUID, value: Any, timeout: Long = 0L, delay: Long = 0L, callback: SimpleGattCallback): Boolean{
-        setWriteCallback(callback)
-        return write(device.address, uuid.toString(), value, timeout, delay) 
-    }
-    //endregion
-
-    //region Set Notification Methods
-    fun setNotification(address: String, uuid: String, enable: Boolean, timeout: Long = 0L, delay: Long = 0L): Boolean{
-        mBleDeviceList.get(address)?.let{ device ->
-            return mOperationDeque.add(Operation.WriteDescriptor(device, uuid, NOTIFICATION_DESCRIPTOR_UUID, ENABLE_NOTIFICATION_VALUE, timeout, delay)) &&
-                    mOperationDeque.add(Operation.Notify(device, uuid, enable, timeout, delay))
-        }
-        return false
-    }
-    fun setNotification(address: String, uuid: UUID, enable: Boolean, timeout: Long = 0L, delay: Long = 0L): Boolean{
-        return setNotification(address, uuid.toString(), enable, timeout, delay) 
-    }
-    fun setNotification(device: BluetoothDevice, uuid: String, enable: Boolean, timeout: Long = 0L, delay: Long = 0L): Boolean{
-        return setNotification(device.address, uuid, enable, timeout, delay) 
-    }
-    fun setNotification(device: BluetoothDevice, uuid: UUID, enable: Boolean, timeout: Long = 0L, delay: Long = 0L): Boolean{
-        return setNotification(device.address, uuid.toString(), enable, timeout, delay) 
-    }
-    fun setNotification(address: String, uuid: String, enable: Boolean, timeout: Long = 0L, delay: Long = 0L, callback: SimpleGattCallback): Boolean{
-        setNotificationCallback(callback)
-        return setNotification(address, uuid, enable, timeout, delay) 
-    }
-    fun setNotification(address: String, uuid: UUID, enable: Boolean, timeout: Long = 0L, delay: Long = 0L, callback: SimpleGattCallback): Boolean{
-        setNotificationCallback(callback)
-        return setNotification(address, uuid.toString(), enable, timeout, delay) 
-    }
-    fun setNotification(device: BluetoothDevice, uuid: String, enable: Boolean, timeout: Long = 0L, delay: Long = 0L, callback: SimpleGattCallback): Boolean{
-        setNotificationCallback(callback)
-        return setNotification(device.address, uuid, enable, timeout, delay) 
-    }
-    fun setNotification(device: BluetoothDevice, uuid: UUID, enable: Boolean, timeout: Long = 0L, delay: Long = 0L, callback: SimpleGattCallback): Boolean{
-        setNotificationCallback(callback)
-        return setNotification(device.address, uuid.toString(), enable, timeout, delay) 
-    }
-    //endregion
-
-    //region Write Descriptor Methods
-    fun writeDescriptor(address: String, characteristicUuid: String, descriptorUuid: String, value: ByteArray, timeout: Long = 0L, delay: Long = 0L): Boolean{
-        mBleDeviceList.get(address)?.let{ device ->
-            return mOperationDeque.add(Operation.WriteDescriptor(device, characteristicUuid, descriptorUuid, value, timeout, delay))
-        }
-        return false
-    }
-
-    // TODO()
-
-    //endregion
-
-    fun addDeviceTemplate(template: DeviceTemplate): Boolean{
-        return mDeviceTemplateList.add(template)
-    }
-
-    //endregion
 
     //region PRIVATE METHODS
     private fun getDeviceFromAddress(address: String): BluetoothDevice?{
         return BluetoothAdapter.getDefaultAdapter().getRemoteDevice(address)
     }
 
-    private fun getWriteValue(device: BleDevice, uuid: String, value: Any): ByteArray{
-        return if(value !is ByteArray) {
-            mDeviceTemplateList.get(device.name)
-                    ?.getCharacteristicFromUUID(uuid)
-                    ?.writeConversion?.invoke(value)
-                    ?: byteArrayOf()
-        }
-        else {
-            value
-        }
-    }
-
-    private fun getCharacteristicValue(device: BleDevice, characteristic: BluetoothGattCharacteristic?): Any?{
-        return characteristic?.let { char ->
-            mDeviceTemplateList.get(device)?.getCharacteristicFromUUID(char.uuid)?.readConversion?.invoke(char.value)
-                    ?: char.value
-        }
-    }
-
     private fun isSameDeviceAsLastOperation(device: BleDevice): Boolean{
-        return mOperationDeque.getLastOperationDevice().address == device.address
+        return mOperationDeque.getLastOperationDevice()?.address == device.address
     }
     //endregion
 

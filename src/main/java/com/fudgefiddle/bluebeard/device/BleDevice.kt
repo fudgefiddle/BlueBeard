@@ -3,6 +3,7 @@ package com.fudgefiddle.bluebeard.device
 import android.bluetooth.*
 import android.content.Context
 import java.util.*
+import kotlin.String
 
 internal class BleDevice(val btDevice: BluetoothDevice) {
     val name: String = btDevice.name

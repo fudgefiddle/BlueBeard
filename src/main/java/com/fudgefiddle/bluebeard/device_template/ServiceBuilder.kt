@@ -17,15 +17,11 @@ class ServiceBuilder internal constructor(private val name: String, private val 
         characteristics.add(characteristic)
         return this
     }
-    fun addCharacteristic(name: String, uuid: UUID): CharacteristicBuilder {
-        val characteristic = Characteristic(name, uuid)
-        checkForDuplicateCharacteristic(characteristic)
-        return CharacteristicBuilder(name, uuid, this)
+    fun addCharacteristic(name: String, uuid: UUID): ServiceBuilder {
+        return addCharacteristic(Characteristic(name, uuid))
     }
-    fun addCharacteristic(name: String, uuid: String): CharacteristicBuilder {
-        val characteristic = Characteristic(name, uuid)
-        checkForDuplicateCharacteristic(characteristic)
-        return CharacteristicBuilder(name, uuid, this)
+    fun addCharacteristic(name: String, uuid: String): ServiceBuilder {
+        return addCharacteristic(Characteristic(name, UUID.fromString(uuid)))
     }
 
     fun build(): Service {

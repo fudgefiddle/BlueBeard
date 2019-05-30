@@ -4,16 +4,11 @@ import java.util.*
 
 sealed class BleProperties {
 
-    class Characteristic internal constructor(val name: String,
-                                              val uuid: UUID,
-                                              internal val readConversion: ((ByteArray) -> Any?)? = null,
-                                              internal val writeConversion: ((Any) -> ByteArray)? = null) : BleProperties(){
-        constructor(name: String, uuid: String) : this(name, UUID.fromString(uuid))
-    }
+    class Characteristic (val name: String, val uuid: UUID) : BleProperties()
 
-    class Service internal constructor(val name: String,
-                                       val uuid: UUID,
-                                       private val characteristics: List<Characteristic>) : BleProperties() {
+    class Service (val name: String,
+                   val uuid: UUID,
+                   val characteristics: List<Characteristic>) : BleProperties() {
         constructor(name: String, uuid: String) : this(name, UUID.fromString(uuid), listOf())
         constructor(name: String, uuid: UUID) : this(name, uuid, listOf())
 

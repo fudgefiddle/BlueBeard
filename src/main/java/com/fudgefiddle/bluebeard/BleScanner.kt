@@ -1,5 +1,7 @@
 package com.fudgefiddle.bluebeard
 
+import android.arch.lifecycle.LiveData
+import android.arch.lifecycle.MutableLiveData
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
@@ -9,6 +11,8 @@ import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.support.annotation.RequiresApi
 
 /**
@@ -30,22 +34,24 @@ sealed class BleScanner
     protected abstract fun abStartScan(): Boolean
     protected abstract fun abStopScan(): Boolean
 
-    protected var mScanning: Boolean = false
+    protected var mCurrentlyScanning: Boolean = false
+    protected val mCurrentlyScanningLiveData: MutableLiveData<Boolean> = MutableLiveData()
     protected var mCustomScanFilter: (BluetoothDevice) -> Boolean = { true }
     //endregion
 
     //region PUBLIC METHODS
-    fun isScanning(): Boolean = mScanning
+    fun isScanning(): Boolean = mCurrentlyScanning
+    fun isScanningLiveData(): LiveData<Boolean> = mCurrentlyScanningLiveData
 
     fun startScan(): Boolean {
-        if (!mScanning)
-            mScanning = abStartScan()
+        if (!mCurrentlyScanning)
+            mCurrentlyScanning = abStartScan().also{ mCurrentlyScanningLiveData.value = it }
         return isScanning()
     }
 
     fun stopScan(): Boolean {
-        if (mScanning)
-            mScanning = abStopScan()
+        if (mCurrentlyScanning)
+            mCurrentlyScanning = !abStopScan().also{ mCurrentlyScanningLiveData.value = it }
         return !isScanning()
     }
 
@@ -88,13 +94,18 @@ sealed class BleScanner
             override fun onScanResult(callbackType: Int, result: ScanResult?) {
                 result?.let { r ->
                     if(mCustomScanFilter(r.device))
-                        scanEvent.onScanResult(r)
+                        Handler(Looper.getMainLooper()).post {
+                            scanEvent.onScanResult(r)
+                        }
                 }
             }
 
             override fun onScanFailed(errorCode: Int) {
-                mScanning = false
-                scanEvent.onScanError()
+                mCurrentlyScanning = false
+                mCurrentlyScanningLiveData.value = false
+                Handler(Looper.getMainLooper()).post {
+                    scanEvent.onScanError()
+                }
             }
         }
 
@@ -124,7 +135,9 @@ sealed class BleScanner
                 BluetoothAdapter.LeScanCallback { device, _, _ ->
                     device?.let { d ->
                         if(mCustomScanFilter(d))
-                            scanEvent.onScanResult(d)
+                            Handler(Looper.getMainLooper()).post {
+                                scanEvent.onScanResult(d)
+                            }
                     }
                 }
 
