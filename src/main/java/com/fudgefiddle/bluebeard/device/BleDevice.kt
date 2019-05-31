@@ -76,7 +76,7 @@ internal class BleDevice(val btDevice: BluetoothDevice) {
         return false
     }
 
-    fun notify(uuid: String, enable: Boolean): Boolean{
+    fun enableNotifications(uuid: String, enable: Boolean): Boolean{
         if(connected && discovered) {
             gatt?.apply{
                 return findCharacteristic(uuid){ characteristic ->

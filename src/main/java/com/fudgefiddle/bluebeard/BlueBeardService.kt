@@ -1,8 +1,6 @@
 package com.fudgefiddle.bluebeard
 
 import android.app.Service
-import android.arch.lifecycle.LiveData
-import android.arch.lifecycle.MutableLiveData
 import android.bluetooth.*
 import android.bluetooth.BluetoothGatt.*
 import android.content.Context
@@ -24,26 +22,6 @@ class BlueBeardService : Service() {
     private val mContext: Context = this
 
     private var mAutoReconnect: Boolean = false
-
-    private val onReadSuccess: MutableLiveData<Operation.Write> = MutableLiveData()
-    private val onReadFailure: MutableLiveData<Operation.Write> = MutableLiveData()
-
-    private val onWriteSuccess: MutableLiveData<Operation.Write> = MutableLiveData()
-    private val onWriteFailure: MutableLiveData<Operation.Write> = MutableLiveData()
-
-    private val onConnectSuccess: MutableLiveData<Operation.Connect> = MutableLiveData()
-    private val onConnectFailure: MutableLiveData<Operation.Connect> = MutableLiveData()
-
-    private val onDiscoverSuccess: MutableLiveData<Operation.Discover> = MutableLiveData()
-    private val onDiscoverFailure: MutableLiveData<Operation.Discover> = MutableLiveData()
-
-    private val onDisconnectSuccess: MutableLiveData<Operation.Disconnect> = MutableLiveData()
-    private val onDisconnectFailure: MutableLiveData<Operation.Disconnect> = MutableLiveData()
-
-    private val onNotification: MutableLiveData<Operation.Write> = MutableLiveData()
-
-    private val onDescriptorWriteSuccess: MutableLiveData<Operation.WriteDescriptor> = MutableLiveData()
-    private val onDescriptorWriteFailure: MutableLiveData<Operation.WriteDescriptor> = MutableLiveData()
 
     private val mDeviceTemplateList = object : ArrayList<DeviceTemplate>() {
         override fun add(element: DeviceTemplate): Boolean = if(!contains(element)) super.add(element) else false
@@ -80,8 +58,8 @@ class BlueBeardService : Service() {
         private lateinit var mLastOperation: Operation
         private var mCurrentlyOperating = false
 
-        private val mTimeoutHandler: Handler = Handler(Looper.getMainLooper())
-        private val mTimeoutRunnable: Runnable = Runnable { executeNextOperation() }
+        //private val mTimeoutHandler: Handler = Handler(Looper.getMainLooper())
+        //private val mTimeoutRunnable: Runnable = Runnable { executeNextOperation() }
 
         var attemptLimit = 0 // If zero then will not be used
         var faultCorrection = false
@@ -100,6 +78,7 @@ class BlueBeardService : Service() {
         }
 
         fun onOperationCompleteSuccess() {
+            //removeTimeout()
             getLastOperationDevice()?.attempts = 0
             executeNextOperation()
         }
@@ -141,13 +120,14 @@ class BlueBeardService : Service() {
             }, delay)
         }
 
-        private fun startTimeout(time: Long) {
-            mTimeoutHandler.postDelayed(mTimeoutRunnable, time)
+        /*private fun startTimeout(time: Long) {
+            if(time != 0L)
+                mTimeoutHandler.postDelayed(mTimeoutRunnable, time)
         }
 
         fun removeTimeout(){
             mTimeoutHandler.removeCallbacks(mTimeoutRunnable)
-        }
+        }*/
 
         fun resetLastDeviceAttempts(){
             getLastOperationDevice()?.attempts = 0
@@ -163,6 +143,8 @@ class BlueBeardService : Service() {
 
             val delay = operation.delay
             val timeout = operation.timeout
+
+            //startTimeout(timeout)
 
             getLastOperationDevice()?.apply {
                 when {
@@ -221,7 +203,7 @@ class BlueBeardService : Service() {
 
                             is Operation.WriteDescriptor -> delay(delay) { writeDescriptor(operation.characteristicUuid, operation.descriptorUuid, operation.value) }
 
-                            is Operation.Notification -> delay(delay) { notify(operation.uuid, operation.enable) }
+                            is Operation.Notification -> delay(delay) { enableNotifications(operation.uuid, operation.enable) }
 
                             is Operation.Disconnect -> delay(delay) { disconnect() }
 
@@ -229,45 +211,53 @@ class BlueBeardService : Service() {
                         }
                     }
                 }
-
-                if(timeout != 0L)
-                    startTimeout(timeout)
             }
         }
     }
 
+    private fun getCharacteristicName(device: BluetoothDevice, uuid: UUID): String{
+        return mDeviceTemplateList.get(device)?.let{ template ->
+            template.getCharacteristicFromUUID(uuid)?.name ?: ""
+        } ?: ""
+    }
+
     /** Gatt Callbacks */
     private val mGattCallback: BluetoothGattCallback = object : BluetoothGattCallback() {
+
 
         override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
             mBleDeviceList.get(gatt)?.let { device ->
                 CustomGattCallback(status).apply {
                     when (newState) {
                         STATE_CONNECTED -> {
-                            onSuccess { 
-                                device.connected = true
-                                onConnectSuccess.value = Operation.Connect(device.address)
+                            onSuccess { device.connected = true }
+                            onFailure { device.connected = false }
+                            onSuccessOrFail {
+                                Intent().apply{
+                                    action = ACTION_CONNECT
+                                    putExtra(EXTRA_STATUS, status)
+                                    putExtra(EXTRA_OPERATION, Operation.Connect(device.address))
+                                }.also(mContext::sendBroadcast)
                             }
-                            onFailure { 
-                                device.connected = false
-                                onConnectFailure.value = Operation.Connect(device.address)
-                            }
-
                             shouldComplete(isSameDeviceAsLastOperation(device))
                         }
                         STATE_DISCONNECTED -> {
-                            device.apply{
-                                connected = false
-                                discovered = false
-                                closeGatt()
-                            }
-                            onSuccess { onDisconnectSuccess.value = Operation.Disconnect(device.address) }
-
                             onFailure {
                                 if(mAutoReconnect){
                                     mOperationDeque.add(Operation.Connect(device.address))
                                 }
-                                onDisconnectFailure.value = Operation.Disconnect(device.address)
+                            }
+                            onSuccessOrFail {
+                                device.apply{
+                                    connected = false
+                                    discovered = false
+                                    closeGatt()
+                                }
+                                Intent().apply{
+                                    action = ACTION_DISCONNECT
+                                    putExtra(EXTRA_STATUS, status)
+                                    putExtra(EXTRA_OPERATION, Operation.Disconnect(device.address))
+                                }.also(mContext::sendBroadcast)
                             }
 
                             shouldComplete(isSameDeviceAsLastOperation(device))
@@ -280,15 +270,15 @@ class BlueBeardService : Service() {
         override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
             mBleDeviceList.get(gatt)?.let { device ->
                 CustomGattCallback(status).apply {
-                    onSuccess {
-                        device.discovered = true
-                        onDiscoverSuccess.value = Operation.Discover(device.address)
+                    onSuccess { device.discovered = true }
+                    onFailure { device.discovered = false }
+                    onSuccessOrFail {
+                        Intent().apply{
+                            action = ACTION_DISCOVER
+                            putExtra(EXTRA_STATUS, status)
+                            putExtra(EXTRA_OPERATION, Operation.Discover(device.address))
+                        }.also(mContext::sendBroadcast)
                     }
-                    onFailure { 
-                        device.discovered = false
-                        onDiscoverFailure.value = Operation.Discover(device.address)
-                    }
-
                     shouldComplete(isSameDeviceAsLastOperation(device))
                 }.execute()
             }
@@ -301,9 +291,14 @@ class BlueBeardService : Service() {
                 characteristic?.let { char ->
 
                     CustomGattCallback(status).apply {
-                        onSuccess { onReadSuccess.value = Operation.Write(device.address, char.uuid.toString(), char.value) }
 
-                        onFailure { onReadFailure.value = Operation.Write(device.address, char.uuid.toString(), char.value) }
+                        onSuccessOrFail {
+                            Intent().apply{
+                                action = ACTION_READ
+                                putExtra(EXTRA_STATUS, status)
+                                putExtra(EXTRA_OPERATION, Operation.Write(device.address, char.uuid.toString(), char.value))
+                            }.also(mContext::sendBroadcast)
+                        }
 
                         shouldComplete(isSameDeviceAsLastOperation(device))
 
@@ -318,8 +313,13 @@ class BlueBeardService : Service() {
             mBleDeviceList.get(gatt)?.let { device ->
                 characteristic?.let { char ->
                     CustomGattCallback(status).apply {
-                        onSuccess { onWriteSuccess.value = Operation.Write(device.address, char.uuid.toString(), char.value) }
-                        onFailure { onWriteFailure.value = Operation.Write(device.address, char.uuid.toString(), char.value) }
+                        onSuccessOrFail {
+                            Intent().apply{
+                                action = ACTION_WRITE
+                                putExtra(EXTRA_STATUS, status)
+                                putExtra(EXTRA_OPERATION, Operation.Write(device.address, char.uuid.toString(), char.value))
+                            }.also(mContext::sendBroadcast)
+                        }
                         shouldComplete(isSameDeviceAsLastOperation(device))
                     }.execute()
                 }
@@ -330,8 +330,12 @@ class BlueBeardService : Service() {
             mBleDeviceList.get(gatt)?.let { device ->
                 characteristic?.let { char ->
                     CustomGattCallback(GATT_SUCCESS).apply {
-                        onSuccess {
-                            onNotification.value = Operation.Write(device.address, char.uuid.toString(), char.value)
+                        onSuccessOrFail {
+                            Intent().apply{
+                                action = ACTION_NOTIFICATION
+                                putExtra(EXTRA_STATUS, -1)
+                                putExtra(EXTRA_OPERATION, Operation.Write(device.address, char.uuid.toString(), char.value))
+                            }.also(mContext::sendBroadcast)
                         }
                         shouldComplete(false)
                     }.execute()
@@ -343,11 +347,12 @@ class BlueBeardService : Service() {
             mBleDeviceList.get(gatt)?.let{ device ->
                 descriptor?.let { desc ->
                     CustomGattCallback(status).apply {
-                        onSuccess {
-                            onDescriptorWriteSuccess.value = Operation.WriteDescriptor(device.address, desc.characteristic.uuid.toString(), desc.uuid.toString(), desc.value)
-                        }
-                        onFailure {
-                            onDescriptorWriteFailure.value = Operation.WriteDescriptor(device.address, desc.characteristic.uuid.toString(), desc.uuid.toString(), desc.value)
+                        onSuccessOrFail {
+                            Intent().apply{
+                                action = ACTION_WRITE_DESCRIPTOR
+                                putExtra(EXTRA_STATUS, status)
+                                putExtra(EXTRA_OPERATION, Operation.WriteDescriptor(device.address, desc.characteristic.uuid.toString(), desc.uuid.toString(), desc.value))
+                            }.also(mContext::sendBroadcast)
                         }
 
                         shouldComplete(isSameDeviceAsLastOperation(device))
@@ -355,7 +360,6 @@ class BlueBeardService : Service() {
                 }
             }
         }
-
     }
     //endregion
 
@@ -380,7 +384,6 @@ class BlueBeardService : Service() {
     //endregion
 
     //region PUBLIC METHODS
-    //region Service Settings Setters
     fun setAttemptLimit(limit: Int){
         if(limit >= 0) 
             mOperationDeque.attemptLimit = limit
@@ -392,41 +395,24 @@ class BlueBeardService : Service() {
         mAutoReconnect = enable
     }
 
-    fun getReadSuccessLiveData(): LiveData<Operation.Write> = onReadSuccess
-    fun getReadFailureLiveData(): LiveData<Operation.Write> = onReadFailure
-
-    fun getWriteSuccessLiveData(): LiveData<Operation.Write> = onWriteSuccess
-    fun getWriteFailureLiveData(): LiveData<Operation.Write> = onWriteFailure
-
-    fun getConnectSuccessLiveData(): LiveData<Operation.Connect> = onConnectSuccess
-    fun getConnectFailureLiveData(): LiveData<Operation.Connect> = onConnectFailure
-
-    fun getDisconnectSuccessLiveData(): LiveData<Operation.Disconnect> = onDisconnectSuccess
-    fun getDisconnectFailureLiveData(): LiveData<Operation.Disconnect> = onDisconnectFailure
-
-    fun getDiscoverSuccessLiveData(): LiveData<Operation.Discover> = onDiscoverSuccess
-    fun getDiscoverFailureLiveData(): LiveData<Operation.Discover> = onDiscoverFailure
-
-    fun getDescriptorWriteSuccessLiveData(): LiveData<Operation.WriteDescriptor> = onDescriptorWriteSuccess
-    fun getDescriptorWriteFailureLiveData(): LiveData<Operation.WriteDescriptor> = onDescriptorWriteFailure
-
-    fun getNotificationLiveData(): LiveData<Operation.Write> = onNotification
-
     fun send(operation: Operation): Boolean{
         return mOperationDeque.add(operation)
     }
 
-    fun addDeviceTemplate(template: DeviceTemplate): Boolean{
-        return mDeviceTemplateList.add(template)
+    fun isDeviceConnected(address: String): Boolean{
+        return mBleDeviceList.get(address)?.connected ?: false
     }
-    //endregion
 
-    //region Add Device Methods
+    fun isDeviceDiscovered(address: String): Boolean{
+        return mBleDeviceList.get(address)?.discovered ?: false
+    }
+
     fun addDevice(address: String): Boolean{
         return mBleDeviceList.add(address)
     }
-    fun addDevice(device: BluetoothDevice): Boolean{
-        return addDevice(device.address)
+
+    fun addDeviceTemplate(template: DeviceTemplate): Boolean{
+        return mDeviceTemplateList.add(template)
     }
     //endregion
 
@@ -446,6 +432,9 @@ class BlueBeardService : Service() {
         private var gattSuccess: () -> Unit = { }
         // Gatt Failure Function
         private var gattFailure: () -> Unit = { mOperationDeque.addLastOperation() }
+        // Gatt Success or Failure
+        private var gattSuccessOrFail: () -> Unit = { }
+
         // Complete flag
         private var complete: Boolean = true
 
@@ -459,26 +448,30 @@ class BlueBeardService : Service() {
             return this
         }
 
+        fun onSuccessOrFail(doThis: () -> Unit): CustomGattCallback {
+            gattSuccessOrFail = doThis
+            return this
+        }
+
         fun shouldComplete(enable: Boolean): CustomGattCallback {
             complete = enable
             return this
         }
 
         fun execute() {
+           // mOperationDeque.removeTimeout()
             if (status == GATT_SUCCESS) {
-                mOperationDeque.removeTimeout()
                 mOperationDeque.resetLastDeviceAttempts()
                 gattSuccess.invoke()
             } else {
                 gattFailure.invoke()
             }
+
+            gattSuccessOrFail.invoke()
+
             if (complete)
                 mOperationDeque.executeNextOperation()
         }
-    }
-
-    private companion object{
-        private const val NOTIFICATION_DESCRIPTOR_UUID: String = "00002902-0000-1000-8000-00805f9b34fb"
     }
     //endregion
 }
