@@ -1,41 +1,17 @@
 package com.fudgefiddle.bluebeard.device_template
 
-import com.fudgefiddle.bluebeard.device_template.BleProperties.Service
-import com.fudgefiddle.bluebeard.device_template.BleProperties.Characteristic
+import com.fudgefiddle.bluebeard.device_template.BleProperty.Characteristic
+import com.fudgefiddle.bluebeard.device_template.BleProperty.Service
 import java.util.*
 
-class ServiceBuilder internal constructor(private val name: String, private val uuid: UUID, private val device: DeviceTemplateBuilder?) {
-    internal constructor(name: String, uuid: String, device: DeviceTemplateBuilder?) : this(name, UUID.fromString(uuid), device)
+class ServiceBuilder(private val uuid: UUID) {
+    private var name: String = ""
 
-    constructor(name: String, uuid: UUID) : this(name, uuid, null)
-    constructor(name: String, uuid: String) : this(name, uuid, null)
+    private val characteristics = mutableSetOf<Characteristic>()
 
-    private val characteristics: ArrayList<Characteristic> = arrayListOf()
+    fun addCharacteristic(characteristic: Characteristic) = this.also { characteristics.add(characteristic) }
 
-    fun addCharacteristic(characteristic: Characteristic): ServiceBuilder {
-        checkForDuplicateCharacteristic(characteristic)
-        characteristics.add(characteristic)
-        return this
-    }
-    fun addCharacteristic(name: String, uuid: UUID): ServiceBuilder {
-        return addCharacteristic(Characteristic(name, uuid))
-    }
-    fun addCharacteristic(name: String, uuid: String): ServiceBuilder {
-        return addCharacteristic(Characteristic(name, UUID.fromString(uuid)))
-    }
+    fun setName(name: String) = this.also{ this.name = name }
 
-    fun build(): Service {
-        return Service(name, uuid, characteristics)
-    }
-
-    fun addToDevice(): DeviceTemplateBuilder {
-        return device!!.addService(build())
-    }
-
-    private fun checkForDuplicateCharacteristic(characteristic: Characteristic) {
-        characteristics.forEach { char ->
-            if (char.name == characteristic.name || char.uuid == characteristic.uuid)
-                throw DuplicatePropertyException(characteristic)
-        }
-    }
+    fun build(): Service = Service(uuid, name)
 }

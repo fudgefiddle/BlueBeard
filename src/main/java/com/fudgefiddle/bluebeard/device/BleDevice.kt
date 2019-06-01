@@ -3,9 +3,15 @@ package com.fudgefiddle.bluebeard.device
 import android.bluetooth.*
 import android.content.Context
 import java.util.*
+import kotlin.Comparator
 import kotlin.String
 
 internal class BleDevice(val btDevice: BluetoothDevice) {
+
+    fun equals(other: BleDevice): Boolean{
+        return this.address == other.address
+    }
+
     val name: String = btDevice.name
     val address: String = btDevice.address
 
