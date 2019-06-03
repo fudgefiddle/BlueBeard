@@ -4,17 +4,21 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
-import android.os.Handler
 import android.os.IBinder
-import com.fudgefiddle.bluebeard.callbacks.StateCallback
+import com.fudgefiddle.bluebeard.device_template.DeviceTemplate
 
 class BlueBeard : ServiceConnection {
 
     private var mService: BlueBeardService? = null
+    private lateinit var mTemplateList: List<DeviceTemplate>
 
     //region SERVICE CONNECTION OVERRIDE METHODS
     override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
         mService = (service as BlueBeardService.LocalBinder).getService()
+        mTemplateList.forEach{ temp ->
+            mService?.deviceTemplates?.add(temp)
+
+        }
     }
 
     override fun onServiceDisconnected(name: ComponentName?) {
@@ -24,7 +28,8 @@ class BlueBeard : ServiceConnection {
 
     //region PUBLIC METHODS
     /** Start & Stop Service */
-    fun start(context: Context){
+    fun start(context: Context, templateList: List<DeviceTemplate> = listOf()){
+        mTemplateList = templateList
         context.bindService(Intent(context, BlueBeardService::class.java), this, Context.BIND_AUTO_CREATE)
     }
     fun stop(context: Context) = context.unbindService(this)

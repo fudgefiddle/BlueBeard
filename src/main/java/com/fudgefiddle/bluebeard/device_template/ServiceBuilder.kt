@@ -13,5 +13,5 @@ class ServiceBuilder(private val uuid: UUID) {
 
     fun setName(name: String) = this.also{ this.name = name }
 
-    fun build(): Service = Service(uuid, name)
+    fun build(): Service = Service(uuid, name, characteristics)
 }

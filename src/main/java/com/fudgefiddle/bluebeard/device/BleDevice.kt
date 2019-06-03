@@ -6,11 +6,7 @@ import java.util.*
 import kotlin.Comparator
 import kotlin.String
 
-internal class BleDevice(val btDevice: BluetoothDevice) {
-
-    fun equals(other: BleDevice): Boolean{
-        return this.address == other.address
-    }
+internal data class BleDevice(val btDevice: BluetoothDevice) {
 
     val name: String = btDevice.name
     val address: String = btDevice.address
@@ -50,7 +46,7 @@ internal class BleDevice(val btDevice: BluetoothDevice) {
         return gatt?.discoverServices() ?: false
     }
 
-    fun read(uuid: String): Boolean{
+    fun read(uuid: UUID): Boolean{
         if(connected && discovered) {
             gatt?.apply{
                 return findCharacteristic(uuid, ::readCharacteristic)
@@ -59,7 +55,7 @@ internal class BleDevice(val btDevice: BluetoothDevice) {
         return false
     }
 
-    fun write(uuid: String, value: ByteArray): Boolean{
+    fun write(uuid: UUID, value: ByteArray): Boolean{
         if(connected && discovered) {
             gatt?.apply{
                 setCharacteristicValue(uuid, value)
@@ -69,11 +65,11 @@ internal class BleDevice(val btDevice: BluetoothDevice) {
         return false
     }
 
-    fun writeDescriptor(characteristicUuid: String, descriptorUuid: String, value: ByteArray): Boolean{
+    fun writeDescriptor(characteristicUuid: UUID, descriptorUuid: UUID, value: ByteArray): Boolean{
         if(connected && discovered) {
             gatt?.apply {
                 return findCharacteristic(characteristicUuid){ characteristic ->
-                    val descriptor: BluetoothGattDescriptor = characteristic.getDescriptor(UUID.fromString(descriptorUuid))
+                    val descriptor: BluetoothGattDescriptor = characteristic.getDescriptor(descriptorUuid)
                     descriptor.value = value
                     writeDescriptor(descriptor)
                 }
@@ -82,7 +78,7 @@ internal class BleDevice(val btDevice: BluetoothDevice) {
         return false
     }
 
-    fun enableNotifications(uuid: String, enable: Boolean): Boolean{
+    fun enableNotifications(uuid: UUID, enable: Boolean): Boolean{
         if(connected && discovered) {
             gatt?.apply{
                 return findCharacteristic(uuid){ characteristic ->
@@ -93,10 +89,10 @@ internal class BleDevice(val btDevice: BluetoothDevice) {
         return false
     }
 
-    private fun findCharacteristic(uuid: String, andDo: (BluetoothGattCharacteristic) -> Boolean): Boolean {
+    private fun findCharacteristic(uuid: UUID, andDo: (BluetoothGattCharacteristic) -> Boolean): Boolean {
         if (discovered) {
             gatt?.services?.forEach { svc ->
-                svc.characteristics.find { char -> char.uuid.toString() == uuid }?.also {
+                svc.characteristics.find { char -> char.uuid == uuid }?.also {
                     return andDo(it)
                 }
             }
@@ -104,7 +100,7 @@ internal class BleDevice(val btDevice: BluetoothDevice) {
         return false
     }
 
-    private fun setCharacteristicValue(uuid: String, value: ByteArray): Boolean{
+    private fun setCharacteristicValue(uuid: UUID, value: ByteArray): Boolean{
         return findCharacteristic(uuid){ characteristic ->
             characteristic.value = value
             true

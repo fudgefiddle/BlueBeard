@@ -1,18 +1,19 @@
 package com.fudgefiddle.bluebeard.operation
 
+import android.bluetooth.BluetoothDevice
 import android.os.Parcel
 import android.os.Parcelable
 import com.fudgefiddle.bluebeard.BLANK_UUID
 import com.fudgefiddle.bluebeard.device_template.BleProperty.*
 import java.util.*
 
-class ReturnOperation(val address: String,
+class ReturnOperation(val device: BluetoothDevice,
                       val characteristic: Characteristic = Characteristic(UUID.fromString(BLANK_UUID), ""),
                       val descriptor: Descriptor = Descriptor(UUID.fromString(BLANK_UUID), ""),
                       val value: ByteArray = byteArrayOf()) : Parcelable {
 
     override fun writeToParcel(pOut: Parcel, flags: Int) = with(pOut) {
-        writeString(address)
+        writeParcelable(device, flags)
         writeString(characteristic.name)
         writeString(characteristic.uuid.toString())
         writeString(descriptor.name)
@@ -27,10 +28,10 @@ class ReturnOperation(val address: String,
     companion object CREATOR : Parcelable.Creator<ReturnOperation> {
         override fun createFromParcel(source: Parcel): ReturnOperation = with(source) {
             return ReturnOperation(
-                    readString()!!,
+                    readParcelable(BluetoothDevice::class.java.classLoader)!!,
                     Characteristic(UUID.fromString(readString()!!),readString()!!),
                     Descriptor(UUID.fromString(readString()!!),readString()!!),
-                    byteArrayOf().apply(::readByteArray)
+                    createByteArray()!!
             )
         }
 

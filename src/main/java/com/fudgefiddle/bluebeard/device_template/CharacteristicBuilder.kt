@@ -11,5 +11,5 @@ class CharacteristicBuilder(private val uuid: UUID) {
 
     fun setName(name: String) = this.also{ this.name = name }
 
-    fun build() = BleProperty.Characteristic(uuid, name)
+    fun build() = BleProperty.Characteristic(uuid, name, descriptors)
 }
