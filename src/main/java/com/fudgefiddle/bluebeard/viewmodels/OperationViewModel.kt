@@ -5,6 +5,7 @@ import android.arch.lifecycle.AndroidViewModel
 import android.arch.lifecycle.LiveData
 import android.arch.lifecycle.MutableLiveData
 import android.bluetooth.BluetoothGatt.GATT_SUCCESS
+import android.bluetooth.BluetoothProfile
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -66,25 +67,27 @@ class OperationViewModel(app: Application) : AndroidViewModel(app) {
             val operation: ReturnOperation = getParcelableExtra(EXTRA_OPERATION)
             when (action) {
 
-                ACTION_INITIALIZED -> isInitialized.value = true
 
-                ACTION_UNINITIALIZED -> isInitialized.value = false
+                ACTION_SERVICE_STATE_CHANGED -> isInitialized.value = getBooleanExtra(EXTRA_STATE, false)
 
-                ACTION_OPERATION_QUEUE_START -> isOperating.value = true
+                ACTION_OPERATION_QUEUE_STATE_CHANGE -> isOperating.value = getBooleanExtra(EXTRA_STATE, false)
 
-                ACTION_OPERATION_QUEUE_END -> isOperating.value = false
+                ACTION_CONNECTION_STATE_CHANGE -> {
+                    when(getIntExtra(EXTRA_STATE, -1)){
+                        BluetoothProfile.STATE_CONNECTED -> {
+                            if (getIntExtra(EXTRA_STATUS, -1) == GATT_SUCCESS)
+                                onConnectSuccess.value = operation
+                            else
+                                onConnectFailure.value = operation
+                        }
 
-                ACTION_CONNECT -> {
-                    if (getIntExtra(EXTRA_STATUS, -1) == GATT_SUCCESS)
-                        onConnectSuccess.value = operation
-                    else
-                        onConnectFailure.value = operation
-                }
-                ACTION_DISCONNECT -> {
-                    if (getIntExtra(EXTRA_STATUS, -1) == GATT_SUCCESS)
-                        onDisconnectSuccess.value = operation
-                    else
-                        onDisconnectFailure.value = operation
+                        BluetoothProfile.STATE_DISCONNECTED -> {
+                            if (getIntExtra(EXTRA_STATUS, -1) == GATT_SUCCESS)
+                                onDisconnectSuccess.value = operation
+                            else
+                                onDisconnectFailure.value = operation
+                        }
+                    }
                 }
                 ACTION_DISCOVER -> {
                     if (getIntExtra(EXTRA_STATUS, -1) == GATT_SUCCESS)

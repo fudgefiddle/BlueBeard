@@ -14,10 +14,10 @@ class ReturnOperation(val device: BluetoothDevice,
 
     override fun writeToParcel(pOut: Parcel, flags: Int) = with(pOut) {
         writeParcelable(device, flags)
-        writeString(characteristic.name)
         writeString(characteristic.uuid.toString())
-        writeString(descriptor.name)
+        writeString(characteristic.name)
         writeString(descriptor.uuid.toString())
+        writeString(descriptor.name)
         writeByteArray(value)
     }
 
