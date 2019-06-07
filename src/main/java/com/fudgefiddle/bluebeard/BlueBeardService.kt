@@ -50,16 +50,31 @@ class BlueBeardService : Service() {
             if (newState == BluetoothProfile.STATE_DISCONNECTED)
                 device.closeGatt()
 
-            // If status is a failure, add a redo operation
-            if (status != GATT_SUCCESS)
-                operationQueue.queueOperationFirst(Operation.Connect(gatt.device))
+            val failure: Boolean = status != GATT_SUCCESS
 
-            // Check if this callback matches the last operation
             operationQueue.getLastOperation().let {
-                if ((it is Operation.Connect || it is Operation.Disconnect) &&
-                    (it.device.address == device.address)) {
-                    // Operation complete
-                    operationQueue.onOperationComplete()
+                when {
+                    // Same exact operation
+                    (it is Operation.Connect || it is Operation.Disconnect) && (it.device.address == device.address) -> {
+                        if(failure) operationQueue.queueOperationFirst(it)
+                        operationQueue.onOperationComplete()
+                    }
+                    // Same address but not same op type and this callback failed (meaning disconnect)
+                    (it.device.address == device.address && failure) -> {
+                        // Put reconnect at front
+                        operationQueue.queueOperationFirst(Operation.Connect(device.address))
+                        // Put last operation in queue again since we won't be getting a callback
+                        operationQueue.queueOperation(it)
+                        // We're not getting a callback so start the queue again
+                        operationQueue.onOperationComplete()
+                    }
+                    // Different op and device and fail (disconnect)
+                    failure -> {
+                        // Put reconnect at front
+                        operationQueue.queueOperationFirst(Operation.Connect(device.address))
+                        // Don't complete because the last operation has a different device meaning
+                        // we're still waiting on a callback
+                    }
                 }
             }
         }
@@ -372,6 +387,7 @@ class BlueBeardService : Service() {
         }
 
         private fun execute(delay: Long, timeout: Long, func: () -> Boolean) {
+            // Gatt operations must be executed on the main thread
             Handler(Looper.getMainLooper()).postDelayed({
                 if (func()) {
                     mTimeout.start(timeout)
