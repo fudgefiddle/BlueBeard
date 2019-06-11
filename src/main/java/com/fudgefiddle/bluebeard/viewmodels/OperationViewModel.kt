@@ -9,6 +9,7 @@ import android.bluetooth.BluetoothProfile
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import com.fudgefiddle.bluebeard.*
 import com.fudgefiddle.bluebeard.operation.ReturnOperation
 
@@ -123,7 +124,16 @@ class OperationViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     init {
-        getApplication<Application>().registerReceiver(mOperationReceiver, INTENT_FILTER_ALL)
+        getApplication<Application>().registerReceiver(mOperationReceiver, IntentFilter().apply{
+            addAction(ACTION_SERVICE_STATE_CHANGED)
+            addAction(ACTION_OPERATION_QUEUE_STATE_CHANGE)
+            addAction(ACTION_CONNECTION_STATE_CHANGE)
+            addAction(ACTION_READ)
+            addAction(ACTION_WRITE)
+            addAction(ACTION_NOTIFICATION)
+            addAction(ACTION_DISCOVER)
+            addAction(ACTION_WRITE_DESCRIPTOR)
+        })
     }
 
     override fun onCleared() {

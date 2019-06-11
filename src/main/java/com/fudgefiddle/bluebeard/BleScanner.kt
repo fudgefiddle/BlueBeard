@@ -1,82 +1,49 @@
 package com.fudgefiddle.bluebeard
 
-import android.arch.lifecycle.LiveData
-import android.arch.lifecycle.MutableLiveData
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothAdapter.LeScanCallback
+import android.bluetooth.BluetoothAdapter.getDefaultAdapter
 import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothManager
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.support.annotation.RequiresApi
+import timber.log.Timber
+import java.util.*
 
 /**
  * BleScanner
  *
- * The sealed class' companion method 'getScanner' will return the appropriate scanner type
+ * The sealed class' companion method 'getInstance' will return the appropriate scanner type
  * depending on API level.
  *
  * NOTE: Versions >= Android 7.0 / API: 24 / VERSION_CODE: N have a security measure that will lock the
  * bluetooth adapter if a scan is started and stopped 5 times within 30 seconds. It is recommended to
  * have at least 6 seconds between each start an stop
  *
- */
-
-/**
- * PRIVATE
  * @property mAdapter: BluetoothAdapter?
  * @property mIsScanning: Boolean - Whether or not scan is in progress
  * @property mIsScanningLiveData: MutableLiveData<Boolean> - LiveData of whether or not scan is in progress
  * @property mCustomScanFilter: (BluetoothDevice) -> Boolean - A custom set function that filters BluetoothDevice objects
- * @property mScanResultLiveData: MutableLiveData<BluetoothDevice> - LiveData of devices returned from scan
- *
- * PUBLIC
- * @property isScanning: Boolean - Immutable version of mIsScanning
- * @property isScanningLiveData: Boolean - Immutable version mIsScanningLiveData
- * @property scanResultLiveData: LiveData<BluetoothDevice> - Immutable version of mScanResultLiveData
  */
 sealed class BleScanner {
-    protected abstract val mAdapter: BluetoothAdapter?
+    protected val mAdapter: BluetoothAdapter? = getDefaultAdapter()
 
-    protected abstract fun abStartScan(): Boolean
-    protected abstract fun abStopScan(): Boolean
+    protected abstract fun startScan()
+    protected abstract fun stopScan()
 
-    protected var mIsScanning: () -> Boolean = { mIsScanningLiveData.value ?: false }
-    protected val mIsScanningLiveData: MutableLiveData<Boolean> = MutableLiveData()
+    protected var mIsScanning: Boolean = false
     protected var mCustomScanFilter: CustomScanFilter = object : CustomScanFilter{
-        override fun filter(device: BluetoothDevice): Boolean {
-            return true
-        }
-    }
-    protected val mScanResultLiveData: MutableLiveData<BluetoothDevice> = MutableLiveData()
-
-    val isScanning: () -> Boolean = { mIsScanning() }
-    val isScanningLiveData: LiveData<Boolean> = mIsScanningLiveData
-    val scanResultLiveData: LiveData<BluetoothDevice> = mScanResultLiveData
-
-    /**
-     * @return if mAdapter was not null when executing
-     */
-    fun startScan(): Boolean {
-        if (!isScanning())
-            mIsScanningLiveData.value = abStartScan()
-        return isScanning()
+        override fun filter(device: BluetoothDevice): Boolean { return true }
     }
 
-    /**
-     * @return if mAdapter was not null when executing
-     */
-    fun stopScan(): Boolean {
-        if (isScanning())
-            mIsScanningLiveData.value = !abStopScan()
-        return !isScanning()
-    }
+    fun isScanning(): Boolean = mIsScanning
 
     /**
      * Sets a custom filter for devices when received
@@ -108,21 +75,25 @@ sealed class BleScanner {
 
     companion object {
         /**
-         * @param context - Needed to initiate api 18 scanner
+         * @param context - Needed to send broadcasts
          * @param callback - Callback to handle scan results. Can be null if LiveData preferred.
          * @return instance of BleScanner dependent upon api level
          */
-        fun getScanner(context: Context, callback: CustomScanCallback? = null): BleScanner {
+        fun getInstance(context: Context? = null, callback: CustomScanCallback? = null): BleScanner {
             return when {
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP -> BleScanner21(callback)
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.N -> { BleScanner24(context, callback) }
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP -> BleScanner21(context, callback)
                 else -> BleScanner18(context, callback)
             }
         }
+
+        const val STATE_STARTING: Int = 0
+        const val STATE_STARTED: Int = 1
+        const val STATE_STOPPED: Int = 2
     }
 
-    @RequiresApi(21)
-    class BleScanner21(callback: CustomScanCallback?) : BleScanner() {
-        override val mAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
+    @RequiresApi(24)
+    class BleScanner24(val context: Context?, callback: CustomScanCallback?) : BleScanner() {
         private val mScanSettings: ScanSettings = ScanSettings.Builder().build()
         private val mScanFilter: List<ScanFilter> = emptyList()
         private val mBleScanCallback: ScanCallback = object : ScanCallback() {
@@ -131,55 +102,160 @@ sealed class BleScanner {
                     if (mCustomScanFilter.filter(result.device))
                         Handler(Looper.getMainLooper()).post {
                             callback?.onScanResult(callbackType, result)
-                            mScanResultLiveData.value = result.device
+                            context?.sendBroadcast(Intent().apply{
+                                action = ACTION_SCAN_RESULT
+                                putExtra(EXTRA_SCAN_RESULT_21, result)
+                            })
                         }
                 }
             }
 
             override fun onScanFailed(errorCode: Int) {
-                mIsScanningLiveData.value = false
+                Timber.d("onScanFailed: %s", ScanErrors.toString(errorCode))
                 Handler(Looper.getMainLooper()).post {
                     callback?.onScanFailed(errorCode)
+                    context?.sendBroadcast(Intent().apply{
+                        action = ACTION_SCAN_ERROR
+                        putExtra(EXTRA_SCAN_ERROR_CODE, errorCode)
+                    })
+                    context?.sendBroadcast(Intent().apply{
+                        action = ACTION_SCAN_STATE_CHANGED
+                        putExtra(EXTRA_STATE, STATE_STOPPED)
+                    })
                 }
             }
         }
 
-        override fun abStartScan(): Boolean {
-            return mAdapter?.bluetoothLeScanner?.startScan(
-                    mScanFilter,
-                    mScanSettings,
-                    mBleScanCallback
-            ) != null
+        private var mLastStartedScanTime: Long = 0
+        private val mScanHandler = Handler()
+        private val mScanRunnable = Runnable {
+            context?.sendBroadcast(Intent().apply{
+                action = ACTION_SCAN_STATE_CHANGED
+                putExtra(EXTRA_STATE, STATE_STARTED)
+            })
+            mLastStartedScanTime = Calendar.getInstance().timeInMillis
+            mIsScanning = true
+            mAdapter?.bluetoothLeScanner
+                    ?.startScan(
+                            mScanFilter,
+                            mScanSettings,
+                            mBleScanCallback)
         }
 
-        override fun abStopScan(): Boolean {
-            return mAdapter?.bluetoothLeScanner?.stopScan(mBleScanCallback) != null
+        override fun startScan() {
+            val timeNeededUntilNextScan = getTimeUntilNextPossibleScan()
+
+            if(timeNeededUntilNextScan > 0){
+                context?.sendBroadcast(Intent().apply{
+                    action = ACTION_SCAN_STATE_CHANGED
+                    putExtra(EXTRA_STATE, STATE_STARTING)
+                })
+                mScanHandler.postDelayed(mScanRunnable, timeNeededUntilNextScan)
+            }else{
+                mScanRunnable.run()
+            }
         }
 
+        override fun stopScan() {
+            mIsScanning = false
+            context?.sendBroadcast(Intent().apply{
+                action = ACTION_SCAN_STATE_CHANGED
+                putExtra(EXTRA_STATE, STATE_STOPPED)
+            })
+            mAdapter?.bluetoothLeScanner?.stopScan(mBleScanCallback)
+        }
+
+        private fun getTimeUntilNextPossibleScan(): Long {
+            val timeSinceLastScan: Long = Calendar.getInstance().timeInMillis - mLastStartedScanTime
+            // If we are under the six second limit then wait for the amount of time needed
+            return if(timeSinceLastScan < 6000) 6000 - timeSinceLastScan else 0
+        }
+    }
+
+    @RequiresApi(21)
+    class BleScanner21(val context: Context?, callback: CustomScanCallback?) : BleScanner() {
+        private val mScanSettings: ScanSettings = ScanSettings.Builder().build()
+        private val mScanFilter: List<ScanFilter> = emptyList()
+        private val mBleScanCallback: ScanCallback = object : ScanCallback() {
+            override fun onScanResult(callbackType: Int, r: ScanResult?) {
+                r?.let { result ->
+                    if (mCustomScanFilter.filter(result.device))
+                        Handler(Looper.getMainLooper()).post {
+                            callback?.onScanResult(callbackType, result)
+                            context?.sendBroadcast(Intent().apply{
+                                action = ACTION_SCAN_RESULT
+                                putExtra(EXTRA_SCAN_RESULT_21, result)
+                            })
+                        }
+                }
+            }
+
+            override fun onScanFailed(errorCode: Int) {
+                Timber.d("onScanFailed: %s", ScanErrors.toString(errorCode))
+                Handler(Looper.getMainLooper()).post {
+                    callback?.onScanFailed(errorCode)
+                    context?.sendBroadcast(Intent().apply{
+                        action = ACTION_SCAN_ERROR
+                        putExtra(EXTRA_SCAN_ERROR_CODE, errorCode)
+                    })
+                }
+            }
+        }
+
+        override fun startScan() {
+            context?.sendBroadcast(Intent().apply{
+                action = ACTION_SCAN_STATE_CHANGED
+                putExtra(EXTRA_STATE, STATE_STARTED)
+            })
+            mIsScanning = true
+            mAdapter?.bluetoothLeScanner
+                    ?.startScan(
+                            mScanFilter,
+                            mScanSettings,
+                            mBleScanCallback)
+        }
+
+        override fun stopScan() {
+            mIsScanning = false
+            context?.sendBroadcast(Intent().apply{
+                action = ACTION_SCAN_STATE_CHANGED
+                putExtra(EXTRA_STATE, STATE_STOPPED)
+            })
+            mAdapter?.bluetoothLeScanner?.stopScan(mBleScanCallback) }
     }
 
     @Suppress("DEPRECATION")
-    class BleScanner18(context: Context, callback: CustomScanCallback?) : BleScanner() {
-        override val mAdapter: BluetoothAdapter? =
-                (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
-
+    class BleScanner18(val context: Context?, callback: CustomScanCallback?) : BleScanner() {
         private val mBleScanCallback: LeScanCallback =
                 LeScanCallback { device, rssi, scanRecord ->
                     device?.let { d ->
                         if (mCustomScanFilter.filter(d))
                             Handler(Looper.getMainLooper()).post {
                                 callback?.onLeScan(device, rssi, scanRecord)
-                                mScanResultLiveData.value = d
+                                context?.sendBroadcast(Intent().apply{
+                                    action = ACTION_SCAN_RESULT
+                                    putExtra(EXTRA_SCAN_RESULT_18, device)
+                                    putExtra(EXTRA_SCAN_RSSI, rssi)
+                                    putExtra(EXTRA_SCAN_SCAN_RECORD, scanRecord)
+                                })
                             }
                     }
                 }
 
-        override fun abStartScan(): Boolean {
-            return mAdapter?.startLeScan(mBleScanCallback) != null
+        override fun startScan() {
+            context?.sendBroadcast(Intent().apply{
+                action = ACTION_SCAN_STATE_CHANGED
+                putExtra(EXTRA_STATE, STATE_STARTED)
+            })
+            mAdapter?.startLeScan(mBleScanCallback)
         }
 
-        override fun abStopScan(): Boolean {
-            return mAdapter?.stopLeScan(mBleScanCallback) != null
+        override fun stopScan() {
+            context?.sendBroadcast(Intent().apply{
+                action = ACTION_SCAN_STATE_CHANGED
+                putExtra(EXTRA_STATE, STATE_STOPPED)
+            })
+            mAdapter?.stopLeScan(mBleScanCallback)
         }
     }
 }

@@ -5,7 +5,6 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.ScanCallback
-import android.content.IntentFilter
 import android.os.Build
 import android.support.annotation.RequiresApi
 
@@ -17,24 +16,22 @@ const val ACTION_WRITE: String = "com.fudgefiddle.bluebeard.WRITE"
 const val ACTION_NOTIFICATION: String = "com.fudgefiddle.bluebeard.NOTIFICATION"
 const val ACTION_DISCOVER: String = "com.fudgefiddle.bluebeard.DISCOVER"
 const val ACTION_WRITE_DESCRIPTOR: String = "com.fudgefiddle.bluebeard.WRITE_DESCRIPTOR"
+const val ACTION_SCAN_RESULT: String = "com.fudgefiddle.bluebeard.SCAN_RESULT"
+const val ACTION_SCAN_ERROR: String = "com.fudgefiddle.bluebeard.SCAN_ERROR"
+const val ACTION_SCAN_STATE_CHANGED: String = "com.fudgefiddle.bluebeard.SCAN_STATE_CHANGED"
 
 const val EXTRA_OPERATION: String = "com.fudgefiddle.bluebeard.EXTRA_OPERATION"
 const val EXTRA_STATUS: String = "com.fudgefiddle.bluebeard.EXTRA_STATUS"
 const val EXTRA_STATE: String = "com.fudgefiddle.bluebeard.EXTRA_STATE"
 
+const val EXTRA_SCAN_RESULT_21: String = "com.fudgefiddle.bluebeard.EXTRA_SCAN_RESULT_21"
+const val EXTRA_SCAN_RESULT_18: String = "com.fudgefiddle.bluebeard.EXTRA_SCAN_RESULT_18"
+const val EXTRA_SCAN_ERROR_CODE: String = "com.fudgefiddle.bluebeard.EXTRA_SCAN_ERROR_CODE"
+const val EXTRA_SCAN_RSSI: String = "com.fudgefiddle.bluebeard.EXTRA_SCAN_RSSI"
+const val EXTRA_SCAN_SCAN_RECORD: String = "com.fudgefiddle.bluebeard.EXTRA_SCAN_RECORD"
+
 const val NOTIFICATION_DESCRIPTOR_UUID: String = "00002902-0000-1000-8000-00805f9b34fb"
 const val BLANK_UUID: String = "00000000-0000-1000-8000-00805f9b34fb"
-
-val INTENT_FILTER_ALL = IntentFilter().apply{
-    addAction(ACTION_SERVICE_STATE_CHANGED)
-    addAction(ACTION_OPERATION_QUEUE_STATE_CHANGE)
-    addAction(ACTION_CONNECTION_STATE_CHANGE)
-    addAction(ACTION_READ)
-    addAction(ACTION_WRITE)
-    addAction(ACTION_NOTIFICATION)
-    addAction(ACTION_DISCOVER)
-    addAction(ACTION_WRITE_DESCRIPTOR)
-}
 
 enum class GattStatuses(val id: Int){
     SUCCESS(BluetoothGatt.GATT_SUCCESS),
