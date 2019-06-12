@@ -35,8 +35,8 @@ import java.util.*
 sealed class BleScanner {
     protected val mAdapter: BluetoothAdapter? = getDefaultAdapter()
 
-    protected abstract fun startScan()
-    protected abstract fun stopScan()
+    abstract fun startScan()
+    abstract fun stopScan()
 
     protected var mIsScanning: Boolean = false
     protected var mCustomScanFilter: CustomScanFilter = object : CustomScanFilter{

@@ -9,37 +9,27 @@ import com.fudgefiddle.bluebeard.device_template.DeviceTemplate
 
 class BlueBeard : ServiceConnection {
 
-    private lateinit var mContext: Context
     private var mService: BlueBeardService? = null
-    private lateinit var mTemplateList: List<DeviceTemplate>
+    private var mCallback: StateCallback? = null
 
     //region SERVICE CONNECTION OVERRIDE METHODS
     override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
         mService = (service as BlueBeardService.LocalBinder).getService()
-        mTemplateList.forEach{ temp ->
-            mService?.deviceTemplates?.add(temp)
-        }
-        onStateChange(true)
+        mCallback?.onInitialize()
     }
 
     override fun onServiceDisconnected(name: ComponentName?) {
-        onStateChange(false)
         mService = null
+        mCallback?.onUninitialize()
     }
     //endregion
 
-    private fun onStateChange(enable: Boolean){
-        mContext.sendBroadcast(Intent().apply{
-            action = ACTION_SERVICE_STATE_CHANGED
-            putExtra(EXTRA_STATE, enable)
-        })
-    }
+
 
     //region PUBLIC METHODS
     /** Start & Stop Service */
-    fun start(context: Context, templateList: List<DeviceTemplate> = listOf()){
-        mContext = context
-        mTemplateList = templateList
+    fun start(context: Context, callback: StateCallback?){
+        mCallback = callback
         context.bindService(Intent(context, BlueBeardService::class.java), this, Context.BIND_AUTO_CREATE)
     }
     fun stop(context: Context) = context.unbindService(this)
@@ -48,4 +38,9 @@ class BlueBeard : ServiceConnection {
 
     fun requireService(): BlueBeardService = mService!!
     //endregion
+
+    interface StateCallback {
+        fun onInitialize()
+        fun onUninitialize()
+    }
 }

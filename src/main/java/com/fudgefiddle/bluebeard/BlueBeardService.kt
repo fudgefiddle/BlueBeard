@@ -88,15 +88,18 @@ class BlueBeardService : Service() {
             // Send intent
             mContext.sendBroadcast(intent)
 
-            // If status is a failure, add a redo operation
-            if (status != GATT_SUCCESS)
-                operationQueue.queueOperationFirst(Operation.Discover(gatt.device))
-
             // Check if this callback matches the last operation
             operationQueue.getLastOperation().let {
+                // Same exact op
                 if (it is Operation.Discover && it.device.address == device.address) {
+                    if(status != GATT_SUCCESS)
+                        operationQueue.queueOperationFirst(it)
                     // Operation complete
                     operationQueue.onOperationComplete()
+                }
+                // Same device that's currently operating but not last op
+                else if (status != GATT_SUCCESS){
+                    operationQueue.queueOperationFirst(Operation.Discover(gatt.device))
                 }
             }
         }
@@ -110,17 +113,17 @@ class BlueBeardService : Service() {
             // Send intent
             mContext.sendBroadcast(intent)
 
-            // If status is a failure, add a redo operation
-            if (status != GATT_SUCCESS)
-                operationQueue.queueOperationFirst(Operation.Read(gatt.device, char))
-
             // Check if this callback matches the last operation
             operationQueue.getLastOperation().let {
                 if (it is Operation.Read &&
                     it.device.address == gatt.device.address &&
                     it.characteristic.uuid == characteristic.uuid) {
+                    if(status != GATT_SUCCESS)
+                        operationQueue.queueOperationFirst(it)
                     // Operation complete
                     operationQueue.onOperationComplete()
+                }else if (status != GATT_SUCCESS){
+                    operationQueue.queueOperationFirst(Operation.Read(gatt.device, char))
                 }
             }
         }
@@ -143,7 +146,7 @@ class BlueBeardService : Service() {
                     // If status is a failure, add a redo operation
                     // Last operation must match so we can write the correct value
                     if (status != GATT_SUCCESS)
-                        operationQueue.queueOperationFirst(Operation.Write(gatt.device, char, it.value))
+                        operationQueue.queueOperationFirst(it)
 
                     // Operation complete
                     operationQueue.onOperationComplete()
@@ -169,7 +172,7 @@ class BlueBeardService : Service() {
                     // If status is a failure, add a redo operation
                     // Last operation must match so we can write the correct value
                     if (status != GATT_SUCCESS)
-                        operationQueue.queueOperationFirst(Operation.WriteDescriptor(gatt.device, desc, it.value))
+                        operationQueue.queueOperationFirst(it)
 
                     // Operation complete
                     operationQueue.onOperationComplete()
@@ -243,15 +246,11 @@ class BlueBeardService : Service() {
             return get(device.address)
         }
 
-        fun add(device: BluetoothDevice): Boolean {
+        internal fun add(device: BluetoothDevice): Boolean {
             if (!contains(device))
                 return mList.add(BleDevice(device))
 
             return false
-        }
-
-        fun add(address: String): Boolean {
-            return add(BluetoothAdapter.getDefaultAdapter().getRemoteDevice(address))
         }
 
         fun contains(device: BluetoothDevice): Boolean {
@@ -267,6 +266,7 @@ class BlueBeardService : Service() {
         private val mQueue = ArrayDeque<Operation>()
         private var mIsCurrentlyOperating = false
         private lateinit var mLastOperation: Operation
+        private var attempts: Int = 0
 
         private fun setCurrentlyOperating(enable: Boolean) {
             mIsCurrentlyOperating = enable
@@ -315,59 +315,75 @@ class BlueBeardService : Service() {
 
                     val delay = currentOperation.delay
                     val timeout = currentOperation.timeout
+                    val attemptLimit = currentOperation.attemptLimit
+
+
 
                     bleDevices.get(currentOperation.device).apply {
-                        execute(delay, timeout) {
-                            when {
-                                !isConnected() -> {
-                                    Timber.d("Device is not connected")
-                                    when (currentOperation) {
-                                        is Operation.Disconnect -> {
-                                            Timber.d("Operation already completed")
-                                            false
-                                        }
+                        if(attemptLimit != 0 && attempts >= attemptLimit) {
+                            Timber.d("Device has met attempt limit")
+                            // Reset attempts else face infinite loop
+                            attempts = 0
+                            // Remove any other operations for this device
+                            mQueue.forEach{ op -> if(op.device.address == address) mQueue.remove(op) }
+                            // Put a disconnect operation at the front
+                            queueOperationFirst(Operation.Disconnect(address))
+                            // Restart
+                            onOperationQueueStart()
+                        }else {
+                            currentOperation.attempts++
+                            execute(delay, timeout) {
+                                when {
+                                    !isConnected() -> {
+                                        Timber.d("Device is not connected")
+                                        when (currentOperation) {
+                                            is Operation.Disconnect -> {
+                                                Timber.d("Operation already completed")
+                                                false
+                                            }
 
-                                        is Operation.Connect -> Handler().postDelayed({ connect(mContext, mGattCallback) }, delay)
+                                            is Operation.Connect -> Handler().postDelayed({ connect(mContext, mGattCallback) }, delay)
 
-                                        else -> {
-                                            Timber.d("Invalid operation. Adding to back stack and putting connection operation at front")
-                                            mQueue.add(currentOperation)
-                                            mQueue.addFirst(Operation.Connect(address))
-                                            false
-                                        }
-                                    }
-                                }
-
-                                !isDiscovered() -> {
-                                    Timber.d("Device is connected but not discovered")
-                                    when (currentOperation) {
-                                        is Operation.Connect -> {
-                                            Timber.d("Operation already completed")
-                                            false
-                                        }
-
-                                        is Operation.Disconnect,
-                                        is Operation.Discover -> executeGattOperation(currentOperation)
-
-                                        else -> {
-                                            Timber.d("Invalid operation. Adding to back stack and putting discover operation at front")
-                                            mQueue.add(currentOperation)
-                                            mQueue.addFirst(Operation.Discover(address))
-                                            false
+                                            else -> {
+                                                Timber.d("Invalid operation. Adding to back stack and putting connection operation at front")
+                                                mQueue.add(currentOperation)
+                                                mQueue.addFirst(Operation.Connect(address))
+                                                false
+                                            }
                                         }
                                     }
-                                }
 
-                                else -> {
-                                    Timber.d("Device is connected and discovered")
-                                    when (currentOperation) {
-                                        is Operation.Connect,
-                                        is Operation.Discover -> {
-                                            Timber.d("Operation already completed")
-                                            false
+                                    !isDiscovered() -> {
+                                        Timber.d("Device is connected but not discovered")
+                                        when (currentOperation) {
+                                            is Operation.Connect -> {
+                                                Timber.d("Operation already completed")
+                                                false
+                                            }
+
+                                            is Operation.Disconnect,
+                                            is Operation.Discover -> executeGattOperation(currentOperation)
+
+                                            else -> {
+                                                Timber.d("Invalid operation. Adding to back stack and putting discover operation at front")
+                                                mQueue.add(currentOperation)
+                                                mQueue.addFirst(Operation.Discover(address))
+                                                false
+                                            }
                                         }
+                                    }
 
-                                        else -> executeGattOperation(currentOperation)
+                                    else -> {
+                                        Timber.d("Device is connected and discovered")
+                                        when (currentOperation) {
+                                            is Operation.Connect,
+                                            is Operation.Discover -> {
+                                                Timber.d("Operation already completed")
+                                                false
+                                            }
+
+                                            else -> executeGattOperation(currentOperation)
+                                        }
                                     }
                                 }
                             }
